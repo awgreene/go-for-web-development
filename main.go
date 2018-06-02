@@ -6,7 +6,6 @@ import (
 	"database/sql"
 
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/yosssi/ace"
 
 	"encoding/json"
 	"encoding/xml"
@@ -14,6 +13,7 @@ import (
 	"net/url"
 
 	"github.com/codegangsta/negroni"
+	"github.com/yosssi/ace"
 )
 
 type Book struct {
@@ -54,15 +54,16 @@ func main() {
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
-		p := Page{Books: []Book{}}
 
-		rows, _ := db.Query("select pk, title, author, classification from books")
+		p := Page{Books: []Book{}}
+		rows, _ := db.Query("select pk,title,author,classification from books")
 		for rows.Next() {
 			var b Book
 			rows.Scan(&b.PK, &b.Title, &b.Author, &b.Classification)
 			p.Books = append(p.Books, b)
 		}
-		if err := template.Execute(w, p); err != nil {
+
+		if err = template.Execute(w, p); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	})
