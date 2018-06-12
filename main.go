@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 
 	"golang.org/x/crypto/bcrypt"
@@ -34,6 +35,7 @@ type Book struct {
 type Page struct {
 	Books  []Book
 	Filter string
+	User   string
 }
 
 type SearchResult struct {
@@ -44,7 +46,7 @@ type SearchResult struct {
 }
 
 type User struct {
-	Usernane string `db:"username"`
+	Username string `db:"username"`
 	Secret   []byte `db:"secret"`
 }
 
@@ -54,6 +56,22 @@ type LoginPage struct {
 
 var db *sql.DB
 var dbmap *gorp.DbMap
+
+func verifyUser(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
+	if r.URL.Path == "/login" {
+		next(w, r)
+		return
+	}
+
+	if username := getStringFromSession(r, "User"); username != "" {
+		if user, _ := dbmap.Get(User{}, username); user != nil {
+			next(w, r)
+			return
+		}
+	}
+
+	http.Redirect(w, r, "/login", http.StatusTemporaryRedirect)
+}
 
 func initDb() {
 	db, _ = sql.Open("sqlite3", "dev.db")
@@ -74,7 +92,7 @@ func verifyDatabase(w http.ResponseWriter, r *http.Request, next http.HandlerFun
 }
 
 func getBookCollection(books *[]Book, sortCol string, filterByClass string, w http.ResponseWriter) bool {
-	if sortCol != "" {
+	if sortCol == "" {
 		sortCol = "pk"
 	}
 	var where string
@@ -110,6 +128,7 @@ func main() {
 			if err := dbmap.Insert(&user); err != nil {
 				p.Error = err.Error()
 			} else {
+				sessions.GetSession(r).Set("User", user.Username)
 				http.Redirect(w, r, "/", http.StatusFound)
 				return
 			}
@@ -124,6 +143,7 @@ func main() {
 				if err = bcrypt.CompareHashAndPassword(u.Secret, []byte(r.FormValue("password"))); err != nil {
 					p.Error = err.Error()
 				} else {
+					sessions.GetSession(r).Set("User", u.Username)
 					http.Redirect(w, r, "/", http.StatusFound)
 					return
 				}
@@ -174,12 +194,15 @@ func main() {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-
-		p := Page{Books: []Book{}, Filter: getStringFromSession(r, "Filter")}
+		p := Page{Books: []Book{}, Filter: getStringFromSession(r, "Filter"), User: getStringFromSession(r, "User")}
+		fmt.Println("Sort by: " + getStringFromSession(r, "SortBy"))
+		fmt.Println("Filter: " + getStringFromSession(r, "Filter"))
 		if !getBookCollection(&p.Books, getStringFromSession(r, "SortBy"), getStringFromSession(r, "Filter"), w) {
+			fmt.Println("Error 1")
 			return
 		}
 		if err = template.Execute(w, p); err != nil {
+			fmt.Println("Error 2")
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}).Methods("GET")
@@ -233,9 +256,17 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	}).Methods("DELETE")
 
+	mux.HandleFunc("/logout", func(w http.ResponseWriter, r *http.Request) {
+		sessions.GetSession(r).Set("User", nil)
+		sessions.GetSession(r).Set("Filter", nil)
+
+		http.Redirect(w, r, "/login", http.StatusFound)
+	})
+
 	n := negroni.Classic()
 	n.Use(sessions.Sessions("go-for-web-dev", cookiestore.New([]byte("my-secret-123"))))
 	n.Use(negroni.HandlerFunc(verifyDatabase))
+	n.Use(negroni.HandlerFunc(verifyUser))
 	n.UseHandler(mux)
 	n.Run(":8080")
 }
